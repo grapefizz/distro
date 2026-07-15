@@ -53,26 +53,21 @@ DiscordIPC = {
 function DiscordIPC.connect()
     if DiscordIPC.is_windows then
         for i = 0, 9 do
-            local file, _ = io.open("\\\\.\\pipe\\discord-ipc-"..i, "r+")
+            local file = io.open("\\\\.\\pipe\\discord-ipc-" .. i, "r+")
 
             if file then
-                print("Distro :: Connected to Discord IPC (pipe "..i..")")
+                print("Distro :: Connected to Discord IPC (pipe " .. i .. ")")
                 DiscordIPC.socket = file
+                break
             end
         end
     else
-        local socket = ffi.C.socket(1, 1, 0)
-        if socket < 0 then
-            print("Distro :: Failed to create Discord IPC socket")
-
-            return false
-        end
-
         local env = nil
-        for _, v in ipairs(DiscordIPC.PIPE_ENVS) do
-            env = os.getenv(v)
 
-            if env then
+        for _, variable in ipairs(DiscordIPC.PIPE_ENVS) do
+            env = os.getenv(variable)
+
+            if env and env ~= "" then
                 if env:sub(-1) == "/" then
                     env = env:sub(1, -2)
                 end
@@ -81,36 +76,56 @@ function DiscordIPC.connect()
             end
         end
 
-        if not env then
-            env = "/tmp"
-        end
+        env = env or "/tmp"
 
         for i = 0, 9 do
-            for _, v in ipairs(DiscordIPC.PIPE_PATHS) do
-                local address = ffi.new("struct sockaddr_un")
-                address.sun_family = 1
-                ffi.copy(address.sun_path, env.."/"..v.."discord-ipc-"..i)
+            for _, subpath in ipairs(DiscordIPC.PIPE_PATHS) do
+                local socket = ffi.C.socket(1, 1, 0)
 
-                if ffi.C.connect(
-                    socket, ffi.cast("const struct sockaddr*", address), ffi.sizeof(address)
-                ) < 0 then
-                    print("Distro :: Failed to connect to Discord IPC (pipe "..i..")")
+                if socket >= 0 then
+                    local address = ffi.new("struct sockaddr_un")
+                    address.sun_family = 1
 
-                    return false
+                    local socket_path =
+                        env .. "/" .. subpath .. "discord-ipc-" .. i
+
+                    ffi.copy(address.sun_path, socket_path)
+
+                    local result = ffi.C.connect(
+                        socket,
+                        ffi.cast("const struct sockaddr*", address),
+                        ffi.sizeof(address)
+                    )
+
+                    if result == 0 then
+                        print(
+                            "Distro :: Connected to Discord IPC (pipe "
+                                .. i
+                                .. ")"
+                        )
+
+                        DiscordIPC.socket = socket
+                        break
+                    end
+
+                    ffi.C.close(socket)
                 end
+            end
 
-                print("Distro :: Connected to Discord IPC (pipe "..i..")")
-                DiscordIPC.socket = socket
+            if DiscordIPC.socket then
+                break
             end
         end
     end
 
     if DiscordIPC.socket then
         DiscordIPC.connected = true
-        local result, _ = DiscordIPC.send_handshake()
 
+        local result = DiscordIPC.send_handshake()
         return result == DiscordIPC.OPCODES.FRAME
     end
+
+    return false
 end
 
 function DiscordIPC.reconnect()
